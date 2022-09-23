@@ -23,7 +23,7 @@ ListNamesForCategory :
   AnouncementListName : "Canvas 公告"
 # 不处理 14 天前过期的项目
 # 如果你是在学期中开始使用本程序，建议设置为 true
-IgnoreTooOldItems : false
+IgnoreTooOldItems : true
 # 遇到错误，程序退出仍返回 0
 # 如果程序总是遇到完全可以忽略的错误，可以设置为 true，防止 GitHub 的邮件轰炸
 # 注：如果附件上传失败，无论 IgnoreErrors 为何值，程序都不会认为遇到了错误
@@ -186,7 +186,7 @@ QuizConfig :
 # Canvas 讨论 配置
 DiscussionConfig : 
   # 是否将 Canvas 讨论同步到 Todo
-  Enabled : true
+  Enabled : false
   CreateContent : true
   # 若 Todo 列表内无当前的讨论，
   # 则把创建的新待办事项的过期时间设置为讨论的发布时间
