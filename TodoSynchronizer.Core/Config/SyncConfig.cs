@@ -80,6 +80,8 @@ namespace TodoSynchronizer.Core.Config
         public bool CreateScoreAndCommit { get; set; }
         public bool CreateAttachments { get; set; }
         public bool CreateImportance { get; set; }
+        public bool CreateComments { get; set; }
+
 
         public bool UpdateTitle { get; set; }
         public bool UpdateContent { get; set; }
@@ -87,12 +89,15 @@ namespace TodoSynchronizer.Core.Config
         public bool UpdateRemind { get; set; }
         public bool UpdateScoreAndCommit { get; set; }
         public bool UpdateImportance { get; set; }
+        public bool UpdateComments { get; set; }
 
         public string TitleTemplate { get; set; }
         public bool SetImportance { get; set; }
         public DueDateMode DueDateMode { get; set; }
         public RemindMode RemindMode { get; set; }
         public TimeSpan BeforeTimeSpan { get; set; }
+
+        public bool DueDateModeFallback { get; set; }
     }
     public enum DueDateMode
     {

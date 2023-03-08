@@ -2,7 +2,6 @@
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -11,9 +10,8 @@ using System.Text.RegularExpressions;
 using TodoSynchronizer.Core.Config;
 using TodoSynchronizer.Core.Extensions;
 using TodoSynchronizer.Core.Helpers;
+using TodoSynchronizer.Core.Models;
 using TodoSynchronizer.Core.Models.CanvasModels;
-using YamlDotNet.Core.Tokens;
-using static System.Net.WebRequestMethods;
 
 namespace TodoSynchronizer.Core.Services
 {
@@ -43,7 +41,7 @@ namespace TodoSynchronizer.Core.Services
         public void Go()
         {
             #region 初始化
-            JsonConvert.DefaultSettings = () => new JsonSerializerSettings() { DateTimeZoneHandling = DateTimeZoneHandling.Local };
+            JsonConvert.DefaultSettings = () => new JsonSerializerSettings() { DateTimeZoneHandling = DateTimeZoneHandling.Utc };
             CourseCount = 0;
             ItemCount = 0;
             UpdateCount = 0;
@@ -54,7 +52,7 @@ namespace TodoSynchronizer.Core.Services
             Message = "读取 Canvas 课程列表";
             try
             {
-                courses = CanvasService.ListCourses();
+                courses = CanvasService.ListCourses().Shuffle();
                 if (courses == null)
                     throw new Exception("Canvas 课程列表为空");
             }
@@ -75,7 +73,7 @@ namespace TodoSynchronizer.Core.Services
 
                 void FindList(string cat, string name)
                 {
-                    var taskList = todoTaskLists.Find(x => x.DisplayName == name);
+                    var taskList = todoTaskLists.Find(x => x.DisplayName.CleanEmoji() == name);
 
                     if (taskList == null)
                         taskList = TodoService.AddTaskList(new TodoTaskList() { DisplayName = name });
@@ -201,7 +199,7 @@ namespace TodoSynchronizer.Core.Services
                 {
                     foreach (var course in courses)
                     {
-                        CourseCount++;
+                            CourseCount++;
                         if (SyncConfig.Default.AssignmentConfig.Enabled)
                             ProcessAssignments(GetCourseMessage(course), course, dicCategory["assignment"]);
                         if (SyncConfig.Default.AnouncementConfig.Enabled)
@@ -298,6 +296,9 @@ namespace TodoSynchronizer.Core.Services
                         
                         var submission = CanvasService.GetAssignmentSubmisson(course.Id.ToString(), assignment.Id.ToString());
 
+                        if (submission == null)
+                           throw new Exception("获取 submission 失败");
+
                         ChecklistItem checkitem1 = null;
                         if (links.Count >= 1)
                             checkitem1 = links[0];
@@ -339,21 +340,50 @@ namespace TodoSynchronizer.Core.Services
                             }
                             updated = true;
                         }
+
+                        //---Comments---//
+                        if (SyncConfig.Default.AssignmentConfig.CreateComments && isnew
+                            || SyncConfig.Default.AssignmentConfig.UpdateComments && !isnew)
+                        {
+                                if (submission.SubmissionComments?.Count > 0)
+                                {
+                                    int i = 2;
+                                    foreach (var comment in submission.SubmissionComments)
+                                    {
+                                        ChecklistItem checkitem3 = null;
+                                        if (links.Count >= i + 1)
+                                            checkitem3 = links[i];
+                                        else
+                                            checkitem3 = null;
+                                        i++;
+
+                                        ChecklistItem checkitem3New = new ChecklistItem();
+                                        var res4 = UpdateSubmissionComment(comment, checkitem3, checkitem3New);
+                                        if (res4)
+                                        {
+                                            if (checkitem3 == null)
+                                            {
+                                                TodoService.AddCheckItem(taskList.Id.ToString(), todoTask.Id.ToString(), checkitem3New);
+                                            }
+                                            else
+                                            {
+                                                TodoService.UpdateCheckItem(taskList.Id.ToString(), todoTask.Id.ToString(), checkitem3.Id.ToString(), checkitem3New);
+                                            }
+                                            updated = true;
+                                        }
+                                    }
+                                }
+                        }
                     }
+
                     //---Attachments---//
                     if (SyncConfig.Default.AssignmentConfig.CreateAttachments)
                     {
                         var files = new List<Models.CanvasModels.Attachment>();
-                        var file_reg = new Regex(@"<a.+?instructure_file_link.+?title=""(.+?)"".+?href=""(.+?)"".+?</a>");
+
                         if (assignment.Content != null)
                         {
-                            var file_matches = file_reg.Matches(assignment.Content);
-                            foreach (Match match in file_matches)
-                            {
-                                var filename = match.Groups[1].Value;
-                                var filepath = match.Groups[2].Value;
-                                files.Add(new Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
-                            }
+                            CheckAttachments(assignment.Content, files);
                         }
 
                         if (files.Count > 0)
@@ -370,6 +400,26 @@ namespace TodoSynchronizer.Core.Services
             {
                 OnReportProgress.Invoke(new SyncState(SyncStateEnum.Error, ex.ToString()));
                 return;
+            }
+        }
+
+        private static void CheckAttachments(string content, List<Models.CanvasModels.Attachment> files)
+        {
+            var file_reg = new Regex(@"<a.+?instructure_file_link.+?title=""(.+?)"".+?href=""(.+?)"".+?</a>");
+            var file_matches = file_reg.Matches(content);
+            var img_reg = new Regex(@"<img.+?src=""(.+?)"".+?alt=""(.+?)"".+?>");
+            var img_matches = img_reg.Matches(content);
+            foreach (Match match in file_matches)
+            {
+                var filename = match.Groups[1].Value;
+                var filepath = match.Groups[2].Value;
+                files.Add(new Core.Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
+            }
+            foreach (Match match in img_matches)
+            {
+                var filename = match.Groups[2].Value;
+                var filepath = match.Groups[1].Value;
+                files.Add(new Core.Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
             }
         }
         #endregion
@@ -422,25 +472,10 @@ namespace TodoSynchronizer.Core.Services
                     if (SyncConfig.Default.DiscussionConfig.CreateAttachments)
                     {
                         var files = discussion.Attachments;
-                        var file_reg = new Regex(@"<a.+?instructure_file_link.+?title=""(.+?)"".+?href=""(.+?)"".+?</a>");
-
+                        
                         if (discussion.Content != null)
                         {
-                            var file_matches = file_reg.Matches(discussion.Content);
-                            var img_reg = new Regex(@"<img.+?src=""(.+?)"".+?alt=""(.+?)"".+?>");
-                            var img_matches = img_reg.Matches(discussion.Content);
-                            foreach (Match match in file_matches)
-                            {
-                                var filename = match.Groups[1].Value;
-                                var filepath = match.Groups[2].Value;
-                                files.Add(new Core.Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
-                            }
-                            foreach (Match match in img_matches)
-                            {
-                                var filename = match.Groups[2].Value;
-                                var filepath = match.Groups[1].Value;
-                                files.Add(new Core.Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
-                            }
+                            CheckAttachments(discussion.Content, files);
                         }
 
                         if (files.Count > 0)
@@ -547,17 +582,10 @@ namespace TodoSynchronizer.Core.Services
                     if (SyncConfig.Default.QuizConfig.CreateAttachments)
                     {
                         var files = new List<Models.CanvasModels.Attachment>();
-                        var file_reg = new Regex(@"<a.+?instructure_file_link.+?title=""(.+?)"".+?href=""(.+?)"".+?</a>");
 
                         if (assignment.Content != null)
                         {
-                            var file_matches = file_reg.Matches(assignment.Content);
-                            foreach (Match match in file_matches)
-                            {
-                                var filename = match.Groups[1].Value;
-                                var filepath = match.Groups[2].Value;
-                                files.Add(new Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
-                            }
+                            CheckAttachments(assignment.Content, files);
                         }
                         
                         if (files.Count > 0)
@@ -630,21 +658,7 @@ namespace TodoSynchronizer.Core.Services
 
                         if (anouncement.Content != null)
                         {
-                            var file_matches = file_reg.Matches(anouncement.Content);
-                            var img_reg = new Regex(@"<img.+?src=""(.+?)"".+?alt=""(.+?)"".+?>");
-                            var img_matches = img_reg.Matches(anouncement.Content);
-                            foreach (Match match in file_matches)
-                            {
-                                var filename = match.Groups[1].Value;
-                                var filepath = match.Groups[2].Value;
-                                files.Add(new Core.Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
-                            }
-                            foreach (Match match in img_matches)
-                            {
-                                var filename = match.Groups[2].Value;
-                                var filepath = match.Groups[1].Value;
-                                files.Add(new Core.Models.CanvasModels.Attachment() { DisplayName = filename, Url = filepath, Locked = false });
-                            }
+                            CheckAttachments(anouncement.Content, files);
                         }
                         
                         if (files.Count > 0)
@@ -742,7 +756,7 @@ namespace TodoSynchronizer.Core.Services
         {
             var modified = false;
             var desc = func(assignment, submission);
-            var check = !desc.Contains("未");
+            var check = !desc.Contains("未") && !desc.Contains("正在");
 
             checklistitemNew.IsChecked = checklistitemOld?.IsChecked ?? false;
             if (checklistitemNew.IsChecked != check)
@@ -757,7 +771,27 @@ namespace TodoSynchronizer.Core.Services
             }
             return modified;
         }
-        
+
+        private bool UpdateSubmissionComment(SubmissionComment comment, ChecklistItem checklistitemOld, ChecklistItem checklistitemNew)
+        {
+            var modified = false;
+            var desc = CanvasStringTemplateHelper.GetSubmissionComment(comment);
+            var check = true;
+
+            checklistitemNew.IsChecked = checklistitemOld?.IsChecked ?? false;
+            if (checklistitemNew.IsChecked != check)
+            {
+                checklistitemNew.IsChecked = check;
+                modified = true;
+            }
+            if (checklistitemOld == null || checklistitemOld.DisplayName != desc)
+            {
+                checklistitemNew.DisplayName = desc;
+                modified = true;
+            }
+            return modified;
+        }
+
         public bool UpdateCanvasItem(Course course, ICanvasItem item, TodoTask todoTaskOld, TodoTask todoTaskNew, ICanvasItemConfig config)
         {
             var modified = false;
@@ -765,7 +799,7 @@ namespace TodoSynchronizer.Core.Services
             if (todoTaskOld == null || todoTaskOld != null && config.UpdateTitle)
             {
                 var title = CanvasStringTemplateHelper.GetTitle(course, item);
-                if (todoTaskOld == null || todoTaskOld.Title == null || title != todoTaskOld.Title)
+                if (todoTaskOld == null || todoTaskOld.Title == null || title.Trim() != todoTaskOld.Title.Trim())
                 {
                     todoTaskNew.Title = title;
                     modified = true;
@@ -775,7 +809,7 @@ namespace TodoSynchronizer.Core.Services
             if (todoTaskOld == null && config.CreateContent || todoTaskOld != null && config.UpdateContent)
             {
                 var content = CanvasStringTemplateHelper.GetContent(item);
-                if (todoTaskOld == null || todoTaskOld.Body.Content == null || content != todoTaskOld.Body.Content)
+                if (todoTaskOld == null || todoTaskOld.Body.Content == null || content.Trim() != todoTaskOld.Body.Content.Trim())
                 {
                     todoTaskNew.Body = new ItemBody() { ContentType = BodyType.Text };
                     todoTaskNew.Body.Content = content;
@@ -920,22 +954,5 @@ namespace TodoSynchronizer.Core.Services
             return bytes;
         }
         #endregion
-    }
-
-    public class SyncState
-    {
-        public SyncState(SyncStateEnum state, string message)
-        {
-            State = state;
-            Message = message;
-        }
-
-        public SyncStateEnum State { get; set; }
-        public string Message { get; set; }
-    }
-
-    public enum SyncStateEnum
-    {
-        Finished, Error, Progress
     }
 }

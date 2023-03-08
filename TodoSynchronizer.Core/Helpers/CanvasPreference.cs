@@ -16,6 +16,13 @@ namespace TodoSynchronizer.Core.Helpers
             return null;
         }
 
+        public static double? GetRemindBefore(this ICanvasItemConfig item)
+        {
+            if (item is QuizConfig quizConfig) return GetRemindBefore(quizConfig);
+            if (item is AssignmentConfig assignmentConfig) return GetRemindBefore(assignmentConfig);
+            return null;
+        }
+
         public static DateTime? GetDueTime(this ICanvasItem item)
         {
             if (item is Quiz quiz) return GetDueTime(quiz);
@@ -27,6 +34,11 @@ namespace TodoSynchronizer.Core.Helpers
         }
 
         #region Quiz
+        public static double GetRemindBefore(this QuizConfig quizConfig)
+        {
+            return quizConfig.BeforeTimeSpan.TotalMinutes;
+        }
+
         public static DateTime? GetRemindTime(this Quiz quiz)
         {
             switch (SyncConfig.Default.QuizConfig.RemindMode)
@@ -57,6 +69,12 @@ namespace TodoSynchronizer.Core.Helpers
         #endregion
 
         #region Assignment
+
+        public static double GetRemindBefore(this AssignmentConfig assignmentConfig)
+        {
+            return assignmentConfig.BeforeTimeSpan.TotalMinutes;
+        }
+
         public static DateTime? GetRemindTime(this Assignment assignment)
         {
             switch (SyncConfig.Default.AssignmentConfig.RemindMode)
@@ -74,14 +92,29 @@ namespace TodoSynchronizer.Core.Helpers
 
         public static DateTime? GetDueTime(this Assignment assignment)
         {
-            switch (SyncConfig.Default.AssignmentConfig.DueDateMode)
+            if (SyncConfig.Default.AssignmentConfig.DueDateModeFallback)
             {
-                case DueDateMode.due_at:
-                    return assignment.DueAt;
-                case DueDateMode.lock_at:
-                    return assignment.LockAt;
-                default:
-                    return null;
+                switch (SyncConfig.Default.AssignmentConfig.DueDateMode)
+                {
+                    case DueDateMode.due_at:
+                        return assignment.DueAt ?? assignment.LockAt;
+                    case DueDateMode.lock_at:
+                        return assignment.LockAt ?? assignment.DueAt;
+                    default:
+                        return null;
+                }
+            }
+            else
+            {
+                switch (SyncConfig.Default.AssignmentConfig.DueDateMode)
+                {
+                    case DueDateMode.due_at:
+                        return assignment.DueAt;
+                    case DueDateMode.lock_at:
+                        return assignment.LockAt;
+                    default:
+                        return null;
+                }
             }
         }
         #endregion
